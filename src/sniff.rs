@@ -179,16 +179,23 @@ const AVIF_BRANDS: [&[u8; 4]; 2] = [b"avif", b"avis"];
 /// The major brand alone is enough for files an iPhone or macOS
 /// writes, but a generic `mif1` major brand is also accepted, as are
 /// compatible brands, so long as no AVIF brand is present anywhere.
+/// A generic container carrying a non-HEVC codec is claimed here and
+/// rejected by the decoder, which is the price of matching the files
+/// whose major brand is not codec-specific.
 fn is_heif(buf: &[u8]) -> bool {
     if buf.len() < 12 || &buf[4..8] != b"ftyp" {
         return false;
     }
     let size = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
     let major = &buf[8..12];
-    // `[size][ftyp][major][minor][compatible brands...]`; a size of 0
-    // means "to end of file", and anything shorter than the header
-    // simply has no compatible brands to read.
-    let end = size.clamp(16, buf.len());
+    // `[size][ftyp][major][minor][compatible brands...]`; a size of 0 means
+    // "to end of file", and anything shorter than the header simply has no
+    // compatible brands to read.
+    let end = if size == 0 {
+        buf.len()
+    } else {
+        size.clamp(16, buf.len())
+    };
     let compatible = buf.get(16..end).unwrap_or(&[]);
     let has_brand = |brands: &[&[u8; 4]]| {
         brands.iter().any(|b| major == &b[..])
@@ -360,6 +367,12 @@ mod tests {
         assert_eq!(detect(&avif), None);
         let avif_compat = ftyp_box(b"mif1", &[b"avif"]);
         assert_eq!(detect(&avif_compat), None);
+
+        // A size of 0 means "to end of file", so compatible brands must
+        // still be read when the major brand is not codec-specific.
+        let mut zero_size = ftyp_box(b"mp42", &[b"heic"]);
+        zero_size[0..4].copy_from_slice(&0_u32.to_be_bytes());
+        assert_eq!(detect(&zero_size), Some(KnownFormat::Heif));
     }
 
     #[test]

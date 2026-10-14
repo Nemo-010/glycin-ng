@@ -32,7 +32,11 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Image> {
     let heic_opts = HeicOptions::default()
         .with_layout(layout)
         .with_max_pixels(Some(opts.limits.max_pixels))
-        .with_alpha(has_alpha);
+        .with_alpha(has_alpha)
+        // The container's `clap`, `irot` and `imir` are structural and
+        // always apply; EXIF orientation is not baked in here, the loader
+        // applies it through `metadata::apply_orientation_if_present`.
+        .with_transforms(true);
 
     let decoded = heic_rs::decode(bytes, &heic_opts).map_err(map_err)?;
     let format = if has_alpha {
@@ -67,15 +71,19 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Image> {
     if let Ok(Some(exif)) = ctx.exif(primary) {
         image.set_exif(exif.to_vec());
     }
-    let nclx = heic_rs::decode::effective_nclx(&props);
-    image.set_cicp([
-        nclx.primaries.min(u16::from(u8::MAX)) as u8,
-        nclx.transfer.min(u16::from(u8::MAX)) as u8,
-        nclx.matrix_code.min(u16::from(u8::MAX)) as u8,
-        matches!(nclx.range, heic_rs::Range::Full) as u8,
-    ]);
+    // Report CICP only when the file carries an `nclx`, matching the other
+    // decoders. `heic-rs` still falls back to BT.709 limited for its own
+    // YCbCr conversion when the file has no `colr`.
+    if let Some(nclx) = props.nclx {
+        image.set_cicp([
+            nclx.primaries.min(u16::from(u8::MAX)) as u8,
+            nclx.transfer.min(u16::from(u8::MAX)) as u8,
+            nclx.matrix_code.min(u16::from(u8::MAX)) as u8,
+            matches!(nclx.range, heic_rs::Range::Full) as u8,
+        ]);
+    }
 
-    let _ = opts.apply_transformations;
+    let _ = (opts.apply_transformations, opts.render_size_hint);
     Ok(image)
 }
 
