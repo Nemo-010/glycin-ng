@@ -22,6 +22,8 @@ mod dds;
 mod exr;
 #[cfg(feature = "gif")]
 mod gif;
+#[cfg(feature = "heif")]
+mod heif;
 #[cfg(feature = "ico")]
 mod ico;
 #[cfg(feature = "jpeg")]
@@ -96,6 +98,8 @@ pub(crate) fn dispatch(format: KnownFormat, bytes: &[u8], opts: &DecodeOptions) 
         KnownFormat::Dds => dds::decode(bytes, opts),
         #[cfg(feature = "jxl")]
         KnownFormat::Jxl => jxl::decode(bytes, opts),
+        #[cfg(feature = "heif")]
+        KnownFormat::Heif => heif::decode(bytes, opts),
         #[cfg(feature = "svg")]
         KnownFormat::Svg => svg::decode(bytes, opts),
         #[allow(unreachable_patterns)]

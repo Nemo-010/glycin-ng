@@ -9,8 +9,8 @@ use std::ffi::{CStr, c_char, c_uint};
 use std::ptr;
 
 use glycin_ng::c_api::{
-    GLYCIN_NG_FORMAT_R8G8B8A8, GLYCIN_NG_KFMT_JPEG, GLYCIN_NG_KFMT_PNG, GlycinNgEncodedImage,
-    GlycinNgEncoder, GlycinNgImage, GlycinNgLoader,
+    GLYCIN_NG_FORMAT_R8G8B8A8, GLYCIN_NG_KFMT_HEIF, GLYCIN_NG_KFMT_JPEG, GLYCIN_NG_KFMT_PNG,
+    GlycinNgEncodedImage, GlycinNgEncoder, GlycinNgImage, GlycinNgLoader,
 };
 
 #[allow(improper_ctypes)]
@@ -173,6 +173,24 @@ fn svg_format_name_round_trips_through_c_abi() {
     let name = unsafe { CStr::from_ptr(name_ptr) }.to_str().unwrap();
     assert_eq!(name, "svg");
     unsafe { glycin_ng_image_free(image) };
+}
+
+#[cfg(feature = "heif")]
+#[test]
+fn heif_format_name_round_trips_through_c_abi() {
+    let bytes: &[u8] = include_bytes!("data/checker-64.heic");
+    let loader = unsafe { glycin_ng_loader_new_bytes(bytes.as_ptr(), bytes.len()) };
+    assert!(!loader.is_null());
+    let image = unsafe { glycin_ng_loader_load(loader) };
+    assert!(!image.is_null(), "heif decode failed");
+    let name_ptr = unsafe { glycin_ng_image_format_name(image) };
+    assert!(!name_ptr.is_null(), "format_name returned NULL for heif");
+    let name = unsafe { CStr::from_ptr(name_ptr) }.to_str().unwrap();
+    assert_eq!(name, "heif");
+    unsafe { glycin_ng_image_free(image) };
+
+    let hinted = unsafe { glycin_ng_known_format_from_mime(c"image/heic".as_ptr()) };
+    assert_eq!(hinted, GLYCIN_NG_KFMT_HEIF);
 }
 
 #[test]

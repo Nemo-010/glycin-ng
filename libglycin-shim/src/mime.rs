@@ -23,6 +23,7 @@ pub(crate) fn from_format_name(name: &str) -> Option<&'static str> {
         "pnm" => "image/x-portable-anymap",
         "dds" => "image/vnd.ms-dds",
         "jxl" => "image/jxl",
+        "heif" => "image/heif",
         "svg" => "image/svg+xml",
         _ => return None,
     })
@@ -62,6 +63,10 @@ pub(crate) const SUPPORTED_MIME_TYPES: &[&str] = &[
     "image/vnd-ms.dds",
     "image/x-dds",
     "image/jxl",
+    "image/heic",
+    "image/heif",
+    "image/heic-sequence",
+    "image/heif-sequence",
     "image/svg+xml",
 ];
 
@@ -75,6 +80,7 @@ mod tests {
         assert_eq!(from_format_name("jpeg"), Some("image/jpeg"));
         assert_eq!(from_format_name("svg"), Some("image/svg+xml"));
         assert_eq!(from_format_name("jxl"), Some("image/jxl"));
+        assert_eq!(from_format_name("heif"), Some("image/heif"));
         assert_eq!(from_format_name("nonsense"), None);
     }
 
@@ -82,7 +88,7 @@ mod tests {
     fn every_format_name_mime_is_in_supported_list() {
         for name in [
             "png", "jpeg", "gif", "webp", "tiff", "bmp", "ico", "tga", "qoi", "exr", "pnm", "dds",
-            "jxl", "svg",
+            "jxl", "svg", "heif",
         ] {
             let mime = from_format_name(name).expect("mapped");
             assert!(

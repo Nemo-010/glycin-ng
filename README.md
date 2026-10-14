@@ -149,9 +149,10 @@ nesting is awkward, you want this.
 | PNM family      | image           | yes    | -      |                                      |
 | DDS             | image           | yes    | -      |                                      |
 | JPEG XL         | jxl-oxide       | yes    | -      |                                      |
+| HEIF / HEIC     | heic-rs         | yes    | -      | HEVC stills, grid tiles              |
 | SVG             | resvg / usvg    | yes    | -      | GTK symbolic-icon wrappers expanded  |
 
-Deferred because no permissive decoder exists yet: HEIF, AVIF, RAW.
+Deferred because no permissive decoder exists yet: AVIF, RAW.
 
 ## Sandbox
 

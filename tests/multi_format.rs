@@ -1,8 +1,22 @@
 //! End-to-end decode round-trips for every wired format.
 
 use glycin_ng::Loader;
-#[cfg(any(feature = "png", feature = "gif"))]
+#[cfg(any(feature = "png", feature = "gif", feature = "heif"))]
 use glycin_ng::MemoryFormat;
+
+#[test]
+#[cfg(feature = "heif")]
+fn end_to_end_heif() {
+    let bytes = include_bytes!("data/checker-64.heic").to_vec();
+    let image = Loader::new_bytes(bytes).load().unwrap();
+    assert_eq!(image.width(), 64);
+    assert_eq!(image.height(), 64);
+    assert_eq!(image.format_name(), "heif");
+    assert_eq!(
+        image.first_frame().unwrap().texture().format(),
+        MemoryFormat::R8g8b8
+    );
+}
 
 #[test]
 #[cfg(feature = "png")]

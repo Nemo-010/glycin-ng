@@ -23,6 +23,7 @@ features = [
   "encode",
   "exr",
   "gif",
+  "heif",
   "ico",
   "jpeg",
   "jxl",

@@ -42,6 +42,10 @@ thiserror = "2"
 version = "0.14"
 optional = true
 
+[dependencies.heic-rs]
+version = "0.1.4"
+optional = true
+
 [dependencies.image]
 version = "0.25"
 default-features = false
@@ -96,6 +100,7 @@ default = [
   "decode",
   "exr",
   "gif",
+  "heif",
   "ico",
   "jpeg",
   "jxl",
@@ -132,6 +137,7 @@ bmp = ["dep:image"]
 dds = ["dep:image"]
 exr = ["dep:image", "image/exr"]
 gif = ["dep:gif"]
+heif = ["dep:heic-rs"]
 ico = ["dep:image"]
 jpeg = ["dep:jpeg-decoder"]
 jxl = ["dep:jxl-oxide"]

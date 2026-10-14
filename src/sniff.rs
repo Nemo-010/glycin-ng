@@ -34,6 +34,8 @@ pub enum KnownFormat {
     Dds,
     /// JPEG XL, codestream or container.
     Jxl,
+    /// HEIF / HEIC (HEVC still pictures in an ISOBMFF container).
+    Heif,
     /// Scalable Vector Graphics.
     Svg,
 }
@@ -55,6 +57,7 @@ impl KnownFormat {
             Self::Pnm => "pnm",
             Self::Dds => "dds",
             Self::Jxl => "jxl",
+            Self::Heif => "heif",
             Self::Svg => "svg",
         }
     }
@@ -75,6 +78,7 @@ impl KnownFormat {
             "pbm" | "pgm" | "ppm" | "pnm" | "pam" => Some(Self::Pnm),
             "dds" => Some(Self::Dds),
             "jxl" => Some(Self::Jxl),
+            "heic" | "heif" | "hif" => Some(Self::Heif),
             "svg" | "svgz" => Some(Self::Svg),
             _ => None,
         }
@@ -100,6 +104,9 @@ impl KnownFormat {
             | "image/x-portable-pixmap" => Some(Self::Pnm),
             "image/vnd.ms-dds" | "image/vnd-ms.dds" | "image/x-dds" => Some(Self::Dds),
             "image/jxl" => Some(Self::Jxl),
+            "image/heic" | "image/heif" | "image/heic-sequence" | "image/heif-sequence" => {
+                Some(Self::Heif)
+            }
             "image/svg+xml" => Some(Self::Svg),
             _ => None,
         }
@@ -148,10 +155,48 @@ pub fn detect(buf: &[u8]) -> Option<KnownFormat> {
     if starts_with(buf, b"\xff\x0a") || starts_with(buf, b"\0\0\0\x0cJXL \r\n\x87\n") {
         return Some(KnownFormat::Jxl);
     }
+    if is_heif(buf) {
+        return Some(KnownFormat::Heif);
+    }
     if looks_like_svg(buf) {
         return Some(KnownFormat::Svg);
     }
     None
+}
+
+/// HEVC-based HEIF brands: stills, sequences, multiview and the
+/// generic `mif1` / `msf1` brands.
+const HEIF_BRANDS: [&[u8; 4]; 10] = [
+    b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b"hevs", b"mif1", b"msf1",
+];
+
+/// AV1 brands. `heic-rs` decodes HEVC only, so an AVIF is not a HEIF
+/// this crate can read and must not be claimed as one.
+const AVIF_BRANDS: [&[u8; 4]; 2] = [b"avif", b"avis"];
+
+/// Detect an ISOBMFF `ftyp` box carrying a HEVC-based HEIF brand.
+///
+/// The major brand alone is enough for files an iPhone or macOS
+/// writes, but a generic `mif1` major brand is also accepted, as are
+/// compatible brands, so long as no AVIF brand is present anywhere.
+fn is_heif(buf: &[u8]) -> bool {
+    if buf.len() < 12 || &buf[4..8] != b"ftyp" {
+        return false;
+    }
+    let size = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    let major = &buf[8..12];
+    // `[size][ftyp][major][minor][compatible brands...]`; a size of 0
+    // means "to end of file", and anything shorter than the header
+    // simply has no compatible brands to read.
+    let end = size.clamp(16, buf.len());
+    let compatible = buf.get(16..end).unwrap_or(&[]);
+    let has_brand = |brands: &[&[u8; 4]]| {
+        brands.iter().any(|b| major == &b[..])
+            || compatible
+                .chunks(4)
+                .any(|c| brands.iter().any(|b| c == &b[..]))
+    };
+    !has_brand(&AVIF_BRANDS) && has_brand(&HEIF_BRANDS)
 }
 
 fn looks_like_svg(buf: &[u8]) -> bool {
@@ -301,6 +346,55 @@ mod tests {
     }
 
     #[test]
+    fn detects_heif_brands() {
+        // iPhone-style: major brand `heic`, compatible brands follow.
+        let mut iphone = ftyp_box(b"heic", &[b"mif1", b"heic"]);
+        assert_eq!(detect(&iphone), Some(KnownFormat::Heif));
+
+        // Generic major brand, HEVC carried in a compatible brand.
+        iphone = ftyp_box(b"mif1", &[b"heic"]);
+        assert_eq!(detect(&iphone), Some(KnownFormat::Heif));
+
+        // An AVIF is not something heic-rs decodes, whatever else it lists.
+        let avif = ftyp_box(b"avif", &[b"mif1", b"avif"]);
+        assert_eq!(detect(&avif), None);
+        let avif_compat = ftyp_box(b"mif1", &[b"avif"]);
+        assert_eq!(detect(&avif_compat), None);
+    }
+
+    #[test]
+    fn heif_extension_and_mime_map() {
+        assert_eq!(KnownFormat::from_extension("heic"), Some(KnownFormat::Heif));
+        assert_eq!(KnownFormat::from_extension("HEIF"), Some(KnownFormat::Heif));
+        assert_eq!(KnownFormat::from_extension("hif"), Some(KnownFormat::Heif));
+        for mime in [
+            "image/heic",
+            "image/heif",
+            "image/heic-sequence",
+            "image/heif-sequence",
+        ] {
+            assert_eq!(
+                KnownFormat::from_mime_type(mime),
+                Some(KnownFormat::Heif),
+                "{mime} should map to Heif"
+            );
+        }
+    }
+
+    /// Build an `ftyp` box with the given major and compatible brands.
+    fn ftyp_box(major: &[u8; 4], compatible: &[&[u8; 4]]) -> Vec<u8> {
+        let size = (16 + compatible.len() * 4) as u32;
+        let mut boxed = size.to_be_bytes().to_vec();
+        boxed.extend_from_slice(b"ftyp");
+        boxed.extend_from_slice(major);
+        boxed.extend_from_slice(&[0, 0, 0, 0]);
+        for brand in compatible {
+            boxed.extend_from_slice(*brand);
+        }
+        boxed
+    }
+
+    #[test]
     fn detects_svg() {
         assert_eq!(detect(b"<svg/>"), Some(KnownFormat::Svg));
         assert_eq!(detect(b"<svg "), Some(KnownFormat::Svg));
@@ -359,6 +453,7 @@ mod tests {
             KnownFormat::Pnm,
             KnownFormat::Dds,
             KnownFormat::Jxl,
+            KnownFormat::Heif,
         ] {
             let n = f.name();
             assert!(!n.is_empty());
