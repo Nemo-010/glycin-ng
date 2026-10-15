@@ -159,8 +159,12 @@ impl Loader {
         let (mut image, posture) = crate::sandbox::run_in_worker(sandbox, limits, move || {
             dispatch(format, &bytes, &opts)
         })?;
+        // HEIF carries orientation in `irot` / `imir`, which the decoder
+        // already applied; its EXIF orientation is informative only.
         #[cfg(feature = "metadata")]
-        crate::metadata::apply_orientation_if_present(&mut image, apply_transformations);
+        if format != KnownFormat::Heif {
+            crate::metadata::apply_orientation_if_present(&mut image, apply_transformations);
+        }
         #[cfg(feature = "metadata")]
         crate::metadata::apply_resolution_fallback(&mut image);
         image.set_sandbox_posture(posture);

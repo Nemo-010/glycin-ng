@@ -104,9 +104,7 @@ impl KnownFormat {
             | "image/x-portable-pixmap" => Some(Self::Pnm),
             "image/vnd.ms-dds" | "image/vnd-ms.dds" | "image/x-dds" => Some(Self::Dds),
             "image/jxl" => Some(Self::Jxl),
-            "image/heic" | "image/heif" | "image/heic-sequence" | "image/heif-sequence" => {
-                Some(Self::Heif)
-            }
+            "image/heic" | "image/heif" => Some(Self::Heif),
             "image/svg+xml" => Some(Self::Svg),
             _ => None,
         }
@@ -164,11 +162,9 @@ pub fn detect(buf: &[u8]) -> Option<KnownFormat> {
     None
 }
 
-/// HEVC-based HEIF brands: stills, sequences, multiview and the
-/// generic `mif1` / `msf1` brands.
-const HEIF_BRANDS: [&[u8; 4]; 10] = [
-    b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b"hevs", b"mif1", b"msf1",
-];
+/// HEVC-based HEIF still-image brands, plus the generic `mif1`.
+/// Sequence brands are left out: `heic-rs` decodes still items only.
+const HEIF_BRANDS: [&[u8; 4]; 5] = [b"heic", b"heix", b"heim", b"heis", b"mif1"];
 
 /// AV1 brands. `heic-rs` decodes HEVC only, so an AVIF is not a HEIF
 /// this crate can read and must not be claimed as one.
@@ -194,7 +190,7 @@ fn is_heif(buf: &[u8]) -> bool {
     let end = if size == 0 {
         buf.len()
     } else {
-        size.clamp(16, buf.len())
+        size.min(buf.len())
     };
     let compatible = buf.get(16..end).unwrap_or(&[]);
     let has_brand = |brands: &[&[u8; 4]]| {
@@ -373,6 +369,15 @@ mod tests {
         let mut zero_size = ftyp_box(b"mp42", &[b"heic"]);
         zero_size[0..4].copy_from_slice(&0_u32.to_be_bytes());
         assert_eq!(detect(&zero_size), Some(KnownFormat::Heif));
+
+        // A buffer cut off inside the `ftyp` header must not panic.
+        for len in 12..16 {
+            assert_eq!(detect(&iphone[..len]), Some(KnownFormat::Heif));
+        }
+
+        // Sequence-only files carry no still item to decode.
+        let sequence = ftyp_box(b"msf1", &[b"hevc"]);
+        assert_eq!(detect(&sequence), None);
     }
 
     #[test]
@@ -380,12 +385,7 @@ mod tests {
         assert_eq!(KnownFormat::from_extension("heic"), Some(KnownFormat::Heif));
         assert_eq!(KnownFormat::from_extension("HEIF"), Some(KnownFormat::Heif));
         assert_eq!(KnownFormat::from_extension("hif"), Some(KnownFormat::Heif));
-        for mime in [
-            "image/heic",
-            "image/heif",
-            "image/heic-sequence",
-            "image/heif-sequence",
-        ] {
+        for mime in ["image/heic", "image/heif"] {
             assert_eq!(
                 KnownFormat::from_mime_type(mime),
                 Some(KnownFormat::Heif),

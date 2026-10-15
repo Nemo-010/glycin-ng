@@ -2,48 +2,59 @@
 //!
 //! `heic-rs` decodes the HEVC still pictures an iPhone or macOS writes,
 //! including grid tiles and the `clap` / `irot` / `imir` transforms.
-//! EXIF orientation is left to the loader, which bakes it in when the
-//! caller asks for it.
+//! Those container transforms are authoritative in HEIF, so the loader
+//! does not apply the EXIF orientation on top of them.
 
 use heic_rs::context::Context;
-use heic_rs::{DecodeOptions as HeicOptions, PixelLayout};
+use heic_rs::meta::iref::RefKind;
+use heic_rs::{ChromaFormat, DecodeOptions as HeicOptions, PixelLayout};
 
 use crate::{Error, Frame, Image, MemoryFormat, Result, Texture};
 
 use super::DecodeOptions;
 
 pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Image> {
+    let info = heic_rs::probe(bytes).map_err(map_err)?;
+    opts.limits.check_dimensions(info.width, info.height, 1)?;
+    // heic-rs 0.1.4 misreads 4:2:2 chroma and still reports success.
+    if info.chroma == ChromaFormat::Yuv422 {
+        return Err(Error::Decoder {
+            format: "heif",
+            message: "4:2:2 chroma is not supported".into(),
+        });
+    }
+
     let ctx = Context::open(bytes).map_err(map_err)?;
-    let primary = ctx.meta.primary;
+    let primary = info.primary_item;
     let props = ctx.props(primary).map_err(map_err)?;
+    let alpha = ctx.alpha_item(primary).map_err(map_err)?;
+    let premultiplied = alpha.is_some_and(|alpha| {
+        ctx.meta.refs.iter().any(|r| {
+            r.kind == RefKind::Other(*b"prem") && r.from == primary && r.to.contains(&alpha)
+        })
+    });
 
-    let (coded_width, coded_height) = ctx.coded_size(primary, &props).map_err(map_err)?;
-    let (width, height) =
-        heic_rs::transform::transformed_size(coded_width, coded_height, &props.transforms)
-            .map_err(map_err)?;
-    opts.limits.check_dimensions(width, height, 1)?;
-
-    let has_alpha = ctx.alpha_item(primary).map_err(map_err)?.is_some();
-    let layout = if has_alpha {
-        PixelLayout::Rgba8
-    } else {
-        PixelLayout::Rgb8
+    let (layout, format) = match (info.bit_depth > 8, alpha.is_some(), premultiplied) {
+        (false, false, _) => (PixelLayout::Rgb8, MemoryFormat::R8g8b8),
+        (false, true, false) => (PixelLayout::Rgba8, MemoryFormat::R8g8b8a8),
+        (false, true, true) => (PixelLayout::Rgba8, MemoryFormat::R8g8b8a8Premultiplied),
+        (true, false, _) => (PixelLayout::Rgb16, MemoryFormat::R16g16b16),
+        (true, true, false) => (PixelLayout::Rgba16, MemoryFormat::R16g16b16a16),
+        (true, true, true) => (PixelLayout::Rgba16, MemoryFormat::R16g16b16a16Premultiplied),
     };
+    // A private pool spawned here inherits the worker's sandbox; rayon's
+    // global pool may already belong to the host and run unsandboxed.
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let heic_opts = HeicOptions::default()
         .with_layout(layout)
         .with_max_pixels(Some(opts.limits.max_pixels))
-        .with_alpha(has_alpha)
-        // The container's `clap`, `irot` and `imir` are structural and
-        // always apply; EXIF orientation is not baked in here, the loader
-        // applies it through `metadata::apply_orientation_if_present`.
-        .with_transforms(true);
+        .with_alpha(alpha.is_some())
+        .with_transforms(true)
+        .with_threads(Some(threads));
 
     let decoded = heic_rs::decode(bytes, &heic_opts).map_err(map_err)?;
-    let format = if has_alpha {
-        MemoryFormat::R8g8b8a8
-    } else {
-        MemoryFormat::R8g8b8
-    };
+    let (width, height) = (decoded.width, decoded.height);
+    opts.limits.check_dimensions(width, height, 1)?;
     let stride = (format.bytes_per_pixel() as u64)
         .checked_mul(width as u64)
         .filter(|s| *s <= u32::MAX as u64)
@@ -62,24 +73,23 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Image> {
     })?;
 
     let mut image = Image::from_parts("heif", width, height, vec![Frame::new(texture, None)]);
-    if let Some(profile) = ctx.icc(&props) {
-        image.set_icc_profile(profile.to_vec());
-    }
     // A file whose EXIF item is split across extents cannot be borrowed
     // by `heic-rs`; metadata is optional, so drop it rather than fail
     // the whole decode.
     if let Ok(Some(exif)) = ctx.exif(primary) {
         image.set_exif(exif.to_vec());
     }
-    // Report CICP only when the file carries an `nclx`, matching the other
-    // decoders. `heic-rs` still falls back to BT.709 limited for its own
-    // YCbCr conversion when the file has no `colr`.
-    if let Some(nclx) = props.nclx {
+    // HEIF prefers an ICC profile over `nclx`. The pixels are already
+    // full-range RGB, so the matrix and range describe the output, not
+    // the coded YCbCr.
+    if let Some(profile) = ctx.icc(&props) {
+        image.set_icc_profile(profile.to_vec());
+    } else if let Some(nclx) = props.nclx {
         image.set_cicp([
             nclx.primaries.min(u16::from(u8::MAX)) as u8,
             nclx.transfer.min(u16::from(u8::MAX)) as u8,
-            nclx.matrix_code.min(u16::from(u8::MAX)) as u8,
-            matches!(nclx.range, heic_rs::Range::Full) as u8,
+            0,
+            1,
         ]);
     }
 

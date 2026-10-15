@@ -19,6 +19,47 @@ fn end_to_end_heif() {
 }
 
 #[test]
+#[cfg(all(feature = "heif", feature = "metadata"))]
+fn heif_irot_is_not_doubled_by_exif_orientation() {
+    // 48x32 quadrants (red, green / blue, white) stored with `clap`,
+    // `irot` and an EXIF Orientation of 6 that says the same thing.
+    let bytes = include_bytes!("data/irot-exif6.heic");
+    for apply in [true, false] {
+        let image = Loader::new_bytes(bytes.to_vec())
+            .apply_transformations(apply)
+            .load()
+            .unwrap();
+        assert_eq!((image.width(), image.height()), (32, 48));
+        assert_eq!(image.orientation(), glycin_ng::Orientation::Normal);
+        assert!(image.exif().is_some());
+
+        let texture = image.first_frame().unwrap().texture();
+        let pixel = |x: usize, y: usize| {
+            let at = y * texture.stride() as usize + x * 3;
+            <[u8; 3]>::try_from(&texture.data()[at..at + 3]).unwrap()
+        };
+        let near =
+            |got: [u8; 3], want: [u8; 3]| got.iter().zip(want).all(|(g, w)| g.abs_diff(w) < 8);
+        assert!(near(pixel(0, 0), [0, 0, 255]), "top-left {:?}", pixel(0, 0));
+        assert!(
+            near(pixel(31, 0), [255, 0, 0]),
+            "top-right {:?}",
+            pixel(31, 0)
+        );
+        assert!(
+            near(pixel(0, 47), [255, 255, 255]),
+            "bottom-left {:?}",
+            pixel(0, 47)
+        );
+        assert!(
+            near(pixel(31, 47), [0, 255, 0]),
+            "bottom-right {:?}",
+            pixel(31, 47)
+        );
+    }
+}
+
+#[test]
 #[cfg(feature = "png")]
 fn end_to_end_png() {
     let mut out = Vec::new();

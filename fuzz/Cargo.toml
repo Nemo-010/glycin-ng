@@ -108,3 +108,10 @@ path = "fuzz_targets/jxl_decode.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "heif_decode"
+path = "fuzz_targets/heif_decode.rs"
+test = false
+doc = false
+bench = false

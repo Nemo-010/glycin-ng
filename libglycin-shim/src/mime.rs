@@ -65,8 +65,6 @@ pub(crate) const SUPPORTED_MIME_TYPES: &[&str] = &[
     "image/jxl",
     "image/heic",
     "image/heif",
-    "image/heic-sequence",
-    "image/heif-sequence",
     "image/svg+xml",
 ];
 
